@@ -1,4 +1,4 @@
-﻿# AB Advisor
+# AB Advisor
 
 **Bayesian A/B test analyzer for product decisions.**
 
@@ -8,11 +8,21 @@
 
 Upload experiment data (user IDs, variant assignment, metrics). AB Advisor fits conjugate Bayesian models per metric and turns the posteriors into something a launch review can actually use:
 
+The following is an illustrative narrative, not a result from your data:
+
 > There is a **99.9%** probability the new checkout increases conversion, with an expected lift of **+24%**. The 90% highest-density interval is **[+17%, +32%]** — it does not include zero. Expected loss if you ship is tiny compared with holding.
 
 That's not a p-value. A p-value answers *"how surprising is this data if nothing changed?"* Nobody walks into an exec review to discuss surprisingness — they walk in to decide whether to ship.
 
 ![Dashboard](screenshots/dashboard.png)
+
+## Read a recommendation in context
+
+Choose a primary metric, define the minimum useful effect and identify guardrails before looking at outcomes. Then inspect assignment quality, model choice, posterior uncertainty and expected loss together.
+
+The sample datasets are synthetic demonstrations. Their results are not evidence for a real checkout launch. Optional model-written narratives summarize the analysis; the numerical engine and report remain the evidence to review.
+
+For reproducibility, retain the input CSV, metric configuration, prior settings, thresholds and report. Begin with [CLI reporting](src/cli.py) for a repeatable batch run or [the dashboard](app.py) for interactive exploration.
 
 ## Why Bayesian (and why it's harder)
 
@@ -177,7 +187,7 @@ Don't say "we got significance." Say:
 
 ### Peeking and sequential monitoring
 
-If you refresh this dashboard daily and stop the moment P(better) crosses 95%, that's a **valid Bayesian sequential rule** — provided the threshold was set in advance. It is **not** valid to peek repeatedly and then also quote a frequentist p-value as if `n` were fixed from the start. The p-value shown in the results table is a translation aid only; don't mix the two stories in one review.
+Bayesian posterior updates can support sequential decisions under an appropriate model and predeclared decision policy. A 95% posterior threshold alone does not guarantee a frequentist false-positive rate or protect against selection, multiple metrics or misspecified priors. Validate stopping rules for your design. Do not interpret a repeatedly inspected fixed-sample p-value as having fixed-horizon guarantees.
 
 ## Sample data (known effects)
 

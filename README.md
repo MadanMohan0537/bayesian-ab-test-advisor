@@ -1,20 +1,46 @@
-# AB Advisor
+# Bayesian A/B Test Advisor
 
-**Bayesian A/B test analyzer for product decisions.**
+**Turn experiment data into a ship / hold / keep-running decision that a launch review can act on: probability of improvement, expected lift with an interval, guardrail checks, and expected loss.**
 
-[![CI](https://github.com/MadanMohan0537/AB-advisor/actions/workflows/ci.yml/badge.svg)](https://github.com/MadanMohan0537/AB-advisor/actions/workflows/ci.yml)
+[![CI](https://github.com/MadanMohan0537/bayesian-ab-test-advisor/actions/workflows/ci.yml/badge.svg)](https://github.com/MadanMohan0537/bayesian-ab-test-advisor/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Upload experiment data (user IDs, variant assignment, metrics). AB Advisor fits conjugate Bayesian models per metric and turns the posteriors into something a launch review can actually use:
+*Previously named `AB-advisor`. The app title, CLI, and module names are unchanged (`AB Advisor`, `python -m src.cli`, `src/`).*
 
-The following is an illustrative narrative, not a result from your data:
+![Static render of the checkout analysis: decision banner, conversion posteriors, lift, and a forest plot](screenshots/dashboard.png)
+
+The figure is produced by `scripts/render_screenshots.py` (matplotlib), not a browser capture of the Streamlit app. That script draws 12,000 posterior samples, so the pictured intervals can differ slightly from the 20,000-draw table in [Sample data](#sample-data-known-effects).
+
+## The product problem
+
+Product teams run A/B tests to decide whether to ship, but the usual output, a p-value, answers "how surprising is this data if nothing changed?" rather than "should we ship, and what do we risk if we're wrong?" Teams also peek early, let a pretty secondary metric outvote a weak primary one, or miss that traffic didn't split as designed.
+
+## Who it is for
+
+Product managers, analysts, and engineers who present experiment results in launch reviews, especially people who aren't statisticians but must make and defend the call.
+
+## Approach
+
+- Fit a **closed-form conjugate Bayesian model per metric** (conversion, revenue with zeros, counts, continuous, skewed). Summaries use Monte Carlo draws from those posteriors, not an MCMC sampler.
+- Make product judgments explicit controls: **prior, minimum useful lift (MDE), ROPE, P(better) ship threshold, and metric roles**. The P(beat MDE) bar (default 80%) and the expected-loss ratio (default 0.25) live in `DecisionThresholds`; they are not sidebar sliders.
+- Roll per-metric results into one **experiment-level recommendation**: ship, hold, keep running, or investigate (sample-ratio mismatch).
+- Write a plain-English summary from a deterministic template; an optional LLM may only rewrite the already-computed numbers.
+
+## Outcomes so far
+
+- Streamlit dashboard (analyze, sample-size planner, how-to-read guide), CLI for batch reports, notebook walkthrough, and example review memos.
+- 33 automated tests, run in CI on Python 3.10, 3.11, and 3.12.
+- Checked against **synthetic datasets with known effects** (below). It has not yet been used on a real product experiment.
+
+---
+
+The quote below uses made-up figures. It is not the bundled sample (that conversion lift is about +31%, not +24%) and it is not a result from your data:
 
 > There is a **99.9%** probability the new checkout increases conversion, with an expected lift of **+24%**. The 90% highest-density interval is **[+17%, +32%]** — it does not include zero. Expected loss if you ship is tiny compared with holding.
 
 That's not a p-value. A p-value answers *"how surprising is this data if nothing changed?"* Nobody walks into an exec review to discuss surprisingness — they walk in to decide whether to ship.
 
-![Dashboard](screenshots/dashboard.png)
 
 ## Read a recommendation in context
 
@@ -26,23 +52,29 @@ For reproducibility, retain the input CSV, metric configuration, prior settings,
 
 ## Why Bayesian (and why it's harder)
 
-| Frequentist t-test / z-test | AB Advisor |
+| Frequentist t-test / z-test | This tool |
 |---|---|
 | p = 0.04 | P(treatment > control) = 97% |
 | "Significant" vs "not" | Expected lift, 90% HDI, chance of beating the MDE |
-| Invalid if you peek | Probability and expected-loss rules stay valid under sequential monitoring |
+| Fixed-horizon p-values are invalid if you peek | Posterior and expected-loss rules can support sequential decisions under a predeclared policy (see caveats below) |
 | Binary conversion only in the simple case | Conversion, revenue (including zeros), counts, continuous, skewed |
 
-The cost is real: you have to pick a **prior**, a **minimum useful lift (MDE)**, and a **loss threshold**. Those are product judgments, not statistical afterthoughts — AB Advisor puts them in the sidebar as explicit controls instead of hiding them behind a stats-package default.
+The paired numbers in the first row are a contrast, not an output of this repository.
+
+The cost is real: you have to pick a **prior**, a **minimum useful lift (MDE)**, a **ROPE**, and a **P(better) ship threshold**. Those are product judgments. The sidebar exposes HDI mass, MDE, ROPE, the ship threshold, posterior draw count, and an optional historical-conversion prior. Metric role and direction are set on the analyze tab. The expected-loss ratio is a code default (0.25), not a sidebar control.
 
 ## Quick start
 
+`python` below is the virtualenv's Python 3.10+ (`python3` on systems where `python` is not on `PATH`).
+
 ```bash
-python -m venv .venv
+git clone https://github.com/MadanMohan0537/bayesian-ab-test-advisor.git
+cd bayesian-ab-test-advisor
+python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-python -m src.data_gen           # writes data/sample_experiment*.csv
+python -m src.data_gen           # writes the three CSVs in data/
 streamlit run app.py
 ```
 
@@ -55,9 +87,11 @@ python -m src.cli data/sample_experiment.csv --name "Checkout redesign" --out do
 pytest -q
 ```
 
+`--out` creates that path; the checked-in memos are [`docs/sample_experiment_review.md`](docs/sample_experiment_review.md) and `docs/generated_experiment_review.md`.
+
 ### Optional LLM narrative
 
-The written summary is a deterministic template by default — no external calls, no dependency on an API key. If you set an API key, AB Advisor asks an LLM to *rewrite* the same computed numbers into a tighter narrative; the model only ever sees the structured JSON output of the Bayesian engine, never the raw data, and is instructed never to invent a figure. If the key is missing or the call fails for any reason, the app falls back to the template.
+The written summary is a deterministic template by default — no external calls, no dependency on an API key. If you set an API key, the tool asks an LLM to *rewrite* the same computed numbers into a tighter narrative; the model only ever sees the structured JSON output of the Bayesian engine, never the raw data, and is instructed never to invent a figure. If the key is missing or the call fails for any reason, the app falls back to the template.
 
 **DeepSeek** (OpenAI-compatible) is the default provider:
 
@@ -68,11 +102,13 @@ streamlit run app.py
 python -m src.cli data/sample_experiment.csv --name "Checkout redesign" --llm
 ```
 
-Default endpoint `https://api.deepseek.com`, default model `deepseek-v4-flash` (thinking disabled, to keep the brief tight). Override with `DEEPSEEK_MODEL` or the sidebar's model field. Set `OPENAI_API_KEY` (and optionally `LLM_PROVIDER=openai`) to use OpenAI instead.
+Default endpoint `https://api.deepseek.com`, default model `deepseek-v4-flash`. When the model name contains `v4`, the client sends `thinking` disabled. Override the model with `DEEPSEEK_MODEL` or the sidebar's model field.
+
+The dashboard can switch provider to `openai` (default model `gpt-4o-mini`) when `OPENAI_API_KEY` is set. The CLI `--llm` flag always calls the DeepSeek-compatible endpoint; `LLM_PROVIDER=openai` does not redirect it.
 
 ## Input format
 
-AB Advisor deliberately rejects unsafe inputs before fitting a model: the file must contain exactly two distinct arms, every user must belong to only one arm, wide data must have one row per user, the expected traffic split must be valid, and each analyzed metric must have usable observations in both arms. Missing metric values are dropped independently within each arm; infinite values are rejected.
+The loader rejects unsafe inputs before fitting a model: the file must contain exactly two distinct arms, every user must belong to only one arm, wide data must have one row per user, and each analyzed metric must have at least one usable observation in both arms. Missing metric values are dropped independently within each arm when that metric is split; infinite values are rejected. `expected_split` must lie strictly between 0 and 1. The app and CLI do not expose that argument; they assume a 50/50 split.
 
 **Wide** — one row per user:
 
@@ -90,54 +126,61 @@ c-00001,control,converted,0
 c-00001,control,revenue,0.00
 ```
 
+The two blocks above show the column layout. They are not rows copied from `data/sample_experiment.csv`.
+
 User, variant, and metric columns are auto-detected from common aliases (`variant`/`group`/`arm`/`bucket`, `user_id`/`uid`/`visitor_id`, etc.). Variant labels `A`/`B`, `0`/`1`, `control`/`treatment` are normalized automatically. Multiple metrics run in one pass, and each gets its own conjugate model — see below.
 
 ## What the engine actually does
 
-No PyMC sampling loop — each metric family has a closed-form conjugate posterior, so a dashboard refresh is milliseconds, not minutes. Monte Carlo (~20k draws by default) is used only to turn two posteriors into P(better), lift, HDI, and expected loss.
+No PyMC sampling loop — each metric family has a closed-form conjugate posterior. Monte Carlo (20,000 draws by default) is used only to turn two posteriors into P(better), lift, HDI, and expected loss.
 
 | Metric pattern | Model | Default prior |
 |---|---|---|
 | 0/1 conversion, bounce | Beta–Binomial | Beta(1, 1) — uniform |
-| Continuous (time on page) | Unknown mean & variance → Student-t on the mean | Weakly informative |
+| Continuous (time on page) | Unknown mean & variance → Student-t on the mean | Reference (flat) prior |
 | Strictly positive & skewed | Log-normal mean | Inverse-χ² on log-variance |
 | Counts (events) | Gamma–Poisson | Gamma(1, 1) |
 | Revenue with many zeros (ARPU) | Hurdle: Beta conversion × log-normal spend given convert | Same as above |
 
-Metric type is auto-detected from the values (binary, integer/low-cardinality → Poisson, zero-inflated & skewed → hurdle log-normal, positive & skewed → log-normal, else Normal) and can be overridden per metric in the UI.
+Metric type is auto-detected from the values (binary, integer counts in a bounded range → Poisson, many zeros and skewed positive values → hurdle log-normal, strictly positive and skewed → log-normal, else Normal) and can be overridden per metric in the UI.
 
 For each metric the report includes:
 
-1. **P(treatment > control)** — probability of improvement (direction flips automatically for "lower is better" metrics like bounce or latency).
+1. **P(treatment mean > control mean)**. The metrics table always reports that direction. For "lower is better" metrics (bounce, latency, and the other names in `default_higher_is_better`), the decision engine flips it and scores P(improvement), P(harm), and expected loss in the improving direction.
 2. **Expected relative lift** — mean of the posterior on (treatment − control) / control.
-3. **90% HDI** (configurable) — shortest interval containing the credible mass of the posterior lift.
+3. **90% HDI** (configurable from 80% to 99% in the sidebar, or `--cred` on the CLI) — shortest interval containing that share of the posterior lift.
 4. **P(lift > MDE)** and **P(harm beyond MDE)** — probability of clearing your minimum useful lift, or of a harmful move past it.
-5. **ROPE probability** — share of posterior mass inside a "too small to care about" band, used to call futility.
-6. **Expected loss** of shipping vs. holding, on the metric's raw scale.
-7. A frequentist p-value, included **only as a footnote** so you can translate for teams that still ask for one.
+5. **ROPE probability** — share of posterior mass inside a "too small to care about" band. A metric is marked `stop_futility` when that share is at least 80% and P(lift > MDE) is under 20% (both defaults).
+6. **Expected loss** of shipping vs. holding, on the metric's raw scale. For lower-is-better metrics the decision engine swaps the two.
+7. A frequentist p-value in the dashboard metrics table, with a caption that it is only a translation aid. The Markdown report does not include it.
 
 ### Expected loss — the actual decision rule
 
-If you ship the treatment, you lose whenever it's actually worse:
+If you ship the treatment, you lose whenever it is actually worse; expected loss is the average size of that loss across the posterior. For one metric, `src/decisions.py` returns `ship` when P(improvement) is at least the ship bar (default 95%) **and** either:
 
-AB Advisor's decision engine (`src/decisions.py`) ships when P(better) and P(beat MDE) both clear their bars, *or* when expected loss from shipping is small relative to the expected loss from holding — the same logic GrowthBook-style Bayesian experimentation stacks use, and more honest than "p < 0.05."
+- P(beat MDE) is at least 80%, or
+- expected loss of shipping is at most 0.25 × expected loss of holding (and holding's expected loss is positive).
+
+The loss-ratio path still requires the ship bar. It does not ship on a small expected loss alone.
 
 ## Decision engine
 
-Every metric gets a role — **primary**, **guardrail**, or **secondary** — inferred from its name (`conversion`/`revenue`/`checkout` → primary; `bounce`/`error`/`latency`/`refund`/`churn` → guardrail; everything else → secondary) or set explicitly. Per-metric actions (`ship` / `hold` / `stop_futility` / `keep_running` / `block`) roll up into one experiment-level call:
+Every metric gets a role — **primary**, **guardrail**, or **secondary** — inferred from its name (`conversion`/`converted`/`revenue`/`purchase`/`checkout`/`signup` → primary; `bounce`/`error`/`latency`/`refund`/`churn` and related tokens → guardrail; everything else → secondary) or set explicitly. Per-metric actions (`ship` / `hold` / `stop_futility` / `keep_running` / `block`) roll up into one experiment-level call:
 
-- **Ship** — every primary metric clears the ship bar and no guardrail is at risk.
-- **Hold** — a guardrail shows material harm (this blocks shipping even if the primary metric won), or a primary metric is a clear loss.
-- **Keep running** — evidence is still mixed on a primary metric; the pre-registered stopping rule hasn't been hit yet.
-- **Investigate** — a sample-ratio-mismatch (SRM) check on the actual vs. expected control/treatment split fails a chi-square test, meaning traffic isn't splitting as designed. Nothing downstream is trustworthy until this is explained, so AB Advisor refuses to recommend shipping.
+- **Ship** — there is at least one primary metric, every primary action is `ship`, and no guardrail action is `block` or `hold`.
+- **Hold** — a guardrail action is `block` or `hold` (this blocks shipping even if a primary metric won), or at least one primary action is `hold` or `stop_futility` and none is `ship` or `keep_running`.
+- **Keep running** — the remaining case, including a mix of primary `ship` and primary `keep_running`, and the case with no primary metric. Secondary metrics are reported and do not change this call.
+- **Investigate** — a sample-ratio-mismatch (SRM) check on the actual vs. expected control/treatment split fails a chi-square test (default flag when p < 0.001). This is checked first. The tool will not recommend shipping until it is cleared.
+
+A guardrail is `block` when the chance of harm beyond the MDE is at least 5% and P(improvement) is below 50%.
 
 ## Dashboard
 
 Three tabs:
 
-1. **Analyze experiment** — upload a CSV or pick a bundled sample; confirm the user/variant/metric columns and per-metric type, role, and direction (all auto-detected, all overridable); set HDI mass, MDE, ROPE, ship threshold, and an optional historical-conversion prior; run the analysis to get KPI cards, a forest plot across metrics, posterior density overlays, the lift distribution with shaded HDI, expected-loss bars, a probability gauge, the written narrative, and a downloadable Markdown/HTML report (print the HTML to PDF for a leave-behind).
-2. **Sample size planner** — simulate binary experiments at a hypothesized lift and report how many users per arm you'd need before P(better) reliably clears your ship threshold.
-3. **How to read results** — a plain-English glossary of P(better), HDI, expected loss, and ROPE, for reviewers who aren't going to read this README.
+1. **Analyze experiment** — upload a CSV or pick a bundled sample; confirm the user/variant/metric columns and per-metric type, role, and direction (all auto-detected, all overridable); set HDI mass, MDE, ROPE, the P(better) ship threshold, posterior draws, and an optional historical-conversion prior; run the analysis to get KPI cards, an overview chart, a forest plot across metrics, posterior density overlays, the lift distribution with shaded HDI, expected-loss bars, a probability gauge, the written narrative, and a downloadable Markdown/HTML report (the HTML button is labeled for printing to PDF).
+2. **Sample size planner** — simulate binary experiments at a hypothesized relative lift and report how many users per arm you need before P(better) clears your ship threshold in at least the chosen share of simulations (the button runs 200 simulations per grid point).
+3. **How to read results** — a plain-English guide to the launch-review question, metric roles, priors, peeking, and limitations. It discusses P(better), expected lift, the HDI, and expected loss. ROPE is a sidebar control and is defined in the downloadable report; that tab does not define it.
 
 ## Repository layout
 
@@ -151,19 +194,19 @@ src/visualize.py               Plotly posteriors, lift, forest plot, gauges
 src/report.py                  Markdown/HTML experiment review + sample size planner
 src/data_gen.py                Synthetic checkout + underpowered datasets (known effects)
 src/cli.py                     Batch report generation from a CSV, no Streamlit required
-scripts/render_screenshots.py  Regenerates the PNGs in screenshots/ from the sample data
+scripts/render_screenshots.py  Rewrites the three sample CSVs, screenshots/*.png, and docs/generated_experiment_review.md
 data/                          Bundled sample CSVs (wide, long, underpowered)
-notebooks/bayesian_demo.ipynb  Walkthrough of the math against the sample dataset
+notebooks/bayesian_demo.ipynb  Walkthrough of the math, using the checkout generator
 docs/                          Example experiment-review memos (see below)
-tests/                         Engine, loaders, decision rules, LLM fallback (pytest)
+tests/                         Engine, loaders, decision rules, validation, LLM fallback (pytest)
 ```
 
 ## For product managers
 
 ### Choosing metrics
 
-- **North star / primary** — the reason the experiment exists (conversion, revenue). Pre-register one before launch. AB Advisor won't let a pretty secondary metric outvote a weak primary.
-- **Guardrails** — bounce, errors, refunds, latency. A guardrail with material probability of harm **blocks shipping**, even if the primary metric won.
+- **North star / primary** — the reason the experiment exists (conversion, revenue). Pre-register one before launch. A secondary `ship` does not outvote a primary that is still `keep_running`, and a secondary `hold` does not block a primary `ship`.
+- **Guardrails** — bounce, errors, refunds, latency. A guardrail action of `block` or `hold` **blocks shipping**, even if the primary metric won.
 - **Secondary** — time on page, event counts. Learning only. An inconclusive secondary metric does not stall a clean primary win.
 
 ### Setting priors from history
@@ -172,7 +215,7 @@ If last quarter's checkout converted at 10% and you'd trust that as roughly 100 
 
 - Prior mean = 0.10, strength = 100 → Beta(10, 90) in the sidebar.
 
-The prior's influence shrinks automatically as the experiment's own `n` grows. Strength 2 (the uniform default) is the right starting point whenever you're unsure.
+The sidebar applies that mean and strength only when the mean is above 0 and the strength is at least 2. Otherwise the prior stays Beta(1, 1). The strength input defaults to 2 and is ignored while the historical mean stays at 0. The prior's influence shrinks as the experiment's own `n` grows.
 
 ### Talking to executives
 
@@ -191,30 +234,31 @@ Bayesian posterior updates can support sequential decisions under an appropriate
 
 ## Sample data (known effects)
 
-`data/sample_experiment.csv` — a checkout redesign, 5,000 users per arm (seed 42):
+`data/sample_experiment.csv` matches `generate_checkout_experiment()` — 5,000 users per arm, seed 42. True rates in the generator are conversion 10% vs 12.5%, bounce 42% vs 40.5%, events 3.0 vs 3.05, and time on page 180s vs 180s. The table is the **observed** file plus the default analysis (20,000 posterior draws, seed 42, MDE 2%, ROPE ±1%, 90% HDI):
 
 | Metric | Control | Treatment | What you should see |
 |---|---|---|---|
-| `converted` | 9.9% | 12.9% | Clear ship — P(better) ≈ 100%, expected lift ≈ +31% |
-| `revenue` (ARPU, zeros included) | ~$5.39 | ~$7.56 | Clear ship via the hurdle model, expected lift ≈ +41% |
-| `time_on_page_sec` | ~180s | ~180s | Null — HDI includes 0, flagged `stop_futility` |
-| `events_count` | ~3.03 | ~3.08 | Mild / inconclusive (P(better) ≈ 93%, but doesn't clear the MDE bar) |
-| `bounce` | 41.6% | 40.3% | Mild improvement (lower is better) — doesn't block shipping |
+| `converted` | 9.86% | 12.94% | `ship` — P(better) = 100% (all 20,000 draws), expected lift +31.4% |
+| `revenue` (ARPU, zeros included) | $5.39 | $7.56 | `ship` via the hurdle model, expected lift +40.8% |
+| `time_on_page_sec` | 179.7s | 179.9s | Null — 90% HDI [−0.64%, +0.82%], includes 0, action `stop_futility` |
+| `events_count` | 3.03 | 3.08 | `keep_running` — P(better) = 92.7%, P(lift > MDE) = 39.7% |
+| `bounce` | 41.6% | 40.3% | Lower is better. Action `keep_running`; it does not block shipping |
 
-Run `python -m src.cli data/sample_experiment.csv --name "Checkout redesign"` to reproduce this exactly — the overall call is **ship**.
+Run `python -m src.cli data/sample_experiment.csv --name "Checkout redesign"` to reproduce that run. The experiment-level call is **ship**.
 
-`data/sample_underpowered.csv` is the same experiment design at n = 400/arm with a much smaller true lift. AB Advisor correctly calls this **keep running**, not "not significant, kill it" — the point of the second dataset is to prove the tool doesn't default to false confidence just because a metric moved in the right direction.
+`data/sample_underpowered.csv` matches `generate_underpowered_experiment()` — same columns, 400 users per arm, seed 7, true conversion 10% vs 10.8%. The other true means are not the checkout experiment's (time on page is centered near 120 seconds). With default thresholds the experiment-level call is **keep running**, because `converted` and `revenue` stay below the ship bar. A secondary can still look decisive on its own in this file (`time_on_page_sec` is `ship`); secondaries do not change the experiment-level call.
 
-`data/sample_experiment_long.csv` is the same checkout data in long format, for testing that ingestion path.
+`data/sample_experiment_long.csv` is the same checkout data in long format. The default analysis also calls it **ship**.
 
 ## Limitations (read before you ship)
 
 - **Independence / SUTVA.** Users are assumed not to interfere with each other. Marketplace, social, or shared-cache effects need a different design.
-- **Assignment must be random and logged correctly.** A sample-ratio mismatch is flagged with a chi-square test; if it fires, the recommendation is *investigate*, not ship, regardless of how good the metrics look.
+- **Assignment must be random and logged correctly.** A sample-ratio mismatch is flagged with a chi-square test (default p < 0.001); if it fires, the recommendation is *investigate*, not ship, regardless of how good the metrics look.
 - **Model family must match the metric.** A skewed revenue column forced through a Normal model will lie. Auto-detection is a starting point — override the type in the UI if it looks wrong.
 - **Multiple metrics inflate false discovery.** Watching a dozen KPIs raises the chance something looks good by chance. Pre-register the primary metric; treat the rest as guardrails or learning.
 - **No CUPED / variance reduction, no switchback design, no clustered users.** Those are reasonable extensions, not in this version.
 - **The LLM can't invent numbers, but it can still over-smooth a caveat.** Prefer the template narrative when the decision is contentious or the write-up is going somewhere high-stakes.
+- **Thresholds you cannot see in the sidebar still decide the call.** P(beat MDE) ≥ 80%, ROPE futility ≥ 80% with P(beat MDE) < 20%, guardrail harm ≥ 5%, and the 0.25 loss ratio are defaults in `DecisionThresholds`. The sidebar's ship slider changes only the P(better) bar.
 
 ## Tests
 
@@ -222,7 +266,35 @@ Run `python -m src.cli data/sample_experiment.csv --name "Checkout redesign"` to
 pytest -q
 ```
 
-33 tests covering: a known conversion lift resolving to P(better) → 1, a true null resolving to an HDI that contains 0, Poisson rates, the hurdle revenue model, long-format CSV ingestion, malformed-input rejection, missing-value handling, SRM detection, the ship/hold/keep-running/investigate decision rules, and the LLM fallback path when no key is configured. GitHub Actions runs the suite on Python 3.10, 3.11, and 3.12 for every push and pull request.
+33 tests, collected from `tests/`. They cover a known conversion lift with P(better) above 0.99, a true null whose HDI contains 0, a Poisson rate shift, the hurdle revenue model, wide and long CSV loading, rejection of a single arm, users in both arms, duplicate wide rows, and an invalid expected split, per-arm dropping of missing values, SRM detection, a ship call on a clear primary win, an investigate call when SRM is flagged, metric-role heuristics, and the template fallback when no API key is set. `test_underpowered_keeps_running` checks that a small conversion lift is not treated as near-certain; it allows `keep_running`, `hold`, or `ship`, so it does not lock the experiment-level action. There is no test that asserts an experiment-level `hold`.
+
+GitHub Actions (`.github/workflows/ci.yml`) runs that suite on Python 3.10, 3.11, and 3.12 for pushes to `main` and for pull requests.
+
+## What I would measure next
+
+- Agreement between the tool's recommendation and an experienced analyst's call on real, permitted experiment data.
+- Time from data export to a written launch-review memo.
+- Frequency of SRM and guardrail blocks caught before a launch decision.
+
+None of these has been measured yet.
+
+## Deployment
+
+Cloudflare Workers is the planned deployment target. It is not configured in this repository: there is no `wrangler.toml`, no Worker entry point, and no live `workers.dev` URL. Nothing here is deployed.
+
+When a Worker exists, publish it with:
+
+```bash
+npx wrangler deploy
+```
+
+That command deploys the Worker script directly. It does not upload a version, roll out a percentage of traffic, or publish a tagged release.
+
+Still needed before that command can succeed:
+
+- a `wrangler.toml` (Worker name and settings)
+- a Worker entry point
+- for this Python code, either [Python Workers](https://developers.cloudflare.com/workers/languages/python/) or a JavaScript/TypeScript port — the Streamlit app does not run as a Worker as it stands
 
 ## License
 

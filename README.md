@@ -278,6 +278,24 @@ GitHub Actions (`.github/workflows/ci.yml`) runs that suite on Python 3.10, 3.11
 
 None of these has been measured yet.
 
+## Deployment
+
+Cloudflare Workers is the planned deployment target. It is not configured in this repository: there is no `wrangler.toml`, no Worker entry point, and no live `workers.dev` URL. Nothing here is deployed.
+
+When a Worker exists, publish it with:
+
+```bash
+npx wrangler deploy
+```
+
+That command deploys the Worker script directly. It does not upload a version, roll out a percentage of traffic, or publish a tagged release.
+
+Still needed before that command can succeed:
+
+- a `wrangler.toml` (Worker name and settings)
+- a Worker entry point
+- for this Python code, either [Python Workers](https://developers.cloudflare.com/workers/languages/python/) or a JavaScript/TypeScript port — the Streamlit app does not run as a Worker as it stands
+
 ## License
 
 Released under the [MIT License](LICENSE).
